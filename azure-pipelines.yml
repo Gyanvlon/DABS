@@ -1,68 +1,114 @@
-# Azure pipeline for DAB
-# Manual trigger
-trigger: none
+# Azure DevOps Pipeline for Databricks Bundle CI/CD
+
+trigger:
+  branches:
+    include:
+      - master
+      - main
+  paths:
+    exclude:
+      - README.md
+      - .gitignore
 
 pool:
-    vmImage: ubuntu-latest
+  vmImage: 'ubuntu-latest'
 
-parameters:
-    - name: env
-      type: string
-      default: dev
-      values:
-        - dev
-        - qa
-    - name: catalog
-      type: string
-      default: ""
+variables:
+  - group: Databricks-dev  # Variable group in Azure DevOps
 
 stages:
-- stage: onRelease
-  variables:
-    - group: ${{parameters.env}}_variables
+  # Stage 1: Validate Bundle
+  - stage: Validate
+    displayName: 'Validate Bundle Configuration'
+    jobs:
+      - job: ValidateJob
+        displayName: 'Validate DAB'
+        steps:
+          - checkout: self
+            displayName: 'Checkout code'
+          
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.11'
+            displayName: 'Use Python 3.11'
+          
+          - script: |
+              curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+            displayName: 'Install Databricks CLI'
+          
+          - script: |
+              export DATABRICKS_HOST=$(DATABRICKS_HOST)
+              export DATABRICKS_TOKEN=$(DATABRICKS_TOKEN)
+              databricks bundle validate --strict --target dev
+            displayName: 'Validate Bundle (dev)'
+            workingDirectory: $(Build.SourcesDirectory)
 
-  jobs:
-    - job: ${{parameters.env}}ReleaseJob
-      steps:
-        - checkout: self
-          displayName: 'Checkout Branch: $(Build.SourceBranchName)'
+  # Stage 2: Deploy to Dev
+  - stage: DeployDev
+    displayName: 'Deploy to Dev Environment'
+    dependsOn: Validate
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
+    jobs:
+      - job: DeployDevJob
+        displayName: 'Deploy to Dev'
+        steps:
+          - checkout: self
+            displayName: 'Checkout code'
+          
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.11'
+            displayName: 'Use Python 3.11'
+          
+          - script: |
+              curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+            displayName: 'Install Databricks CLI'
+          
+          - script: |
+              export DATABRICKS_HOST=$(DATABRICKS_HOST)
+              export DATABRICKS_TOKEN=$(DATABRICKS_TOKEN)
+              databricks bundle deploy --target dev --auto-approve
+            displayName: 'Deploy Bundle to Dev'
+            workingDirectory: $(Build.SourcesDirectory)
+          
+          - script: |
+              export DATABRICKS_HOST=$(DATABRICKS_HOST)
+              export DATABRICKS_TOKEN=$(DATABRICKS_TOKEN)
+              databricks bundle summary --target dev
+            displayName: 'Show Deployment Summary'
+            workingDirectory: $(Build.SourcesDirectory)
 
-        - script: |
-            echo Install Databricks CLI...
-            curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-          displayName: 'Install Databricks CLI'
-
-        - script: |
-            echo "[azure-sp]" > ~/.databrickscfg
-            echo "host = $(DATABRICKS_HOST)" >> ~/.databrickscfg
-            echo "client_id = $(CLIENT_ID)" >> ~/.databrickscfg
-            echo "client_secret = $(CLIENT_SECRET)" >> ~/.databrickscfg
-          displayName: 'Setup M2M Profile for CLI Auth'
-
-        - script: |
-            databricks auth profiles
-          displayName: 'Validate databricks cli auth for ${{parameters.env}} environment'
-
-        - script: |
-            databricks bundle validate --target ${{parameters.env}} --profile azure-sp --var "catalog=${{parameters.catalog}}"
-          displayName: 'Databricks Bundle Validate'
-
-        - script: |
-            databricks bundle summary --target ${{parameters.env}} --profile azure-sp --var "catalog=${{parameters.catalog}}"
-          displayName: 'Databricks Bundle Summary'
-
-        - script: |
-            databricks bundle deploy --target ${{parameters.env}} --profile azure-sp --var "catalog=${{parameters.catalog}}"
-          displayName: 'Databricks Bundle Deploy'
-
-
-
-
-
-
-
-
-
-
-
-
+  # Stage 3: Deploy to QA
+  - stage: DeployQA
+    displayName: 'Deploy to QA Environment'
+    dependsOn: Validate
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: DeployQAJob
+        displayName: 'Deploy to QA'
+        steps:
+          - checkout: self
+            displayName: 'Checkout code'
+          
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.11'
+            displayName: 'Use Python 3.11'
+          
+          - script: |
+              curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+            displayName: 'Install Databricks CLI'
+          
+          - script: |
+              export DATABRICKS_HOST=$(DATABRICKS_HOST_QA)
+              export DATABRICKS_TOKEN=$(DATABRICKS_TOKEN_QA)
+              databricks bundle deploy --target qa --auto-approve
+            displayName: 'Deploy Bundle to QA'
+            workingDirectory: $(Build.SourcesDirectory)
+          
+          - script: |
+              export DATABRICKS_HOST=$(DATABRICKS_HOST_QA)
+              export DATABRICKS_TOKEN=$(DATABRICKS_TOKEN_QA)
+              databricks bundle summary --target qa
+            displayName: 'Show Deployment Summary'
+            workingDirectory: $(Build.SourcesDirectory)
