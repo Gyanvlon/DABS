@@ -24,4 +24,3 @@ resources:
             num_workers: 1
       queue:
         enabled: true
-
